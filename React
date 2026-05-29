@@ -1,0 +1,228 @@
+import React, { useState } from 'react';
+
+function ApiTester() {
+  const [method, setMethod] = useState('GET');
+  const [url, setUrl] = useState('https://jsonplaceholder.typicode.com/todos/1');
+  const [headers, setHeaders] = useState('{\n  "Content-Type": "application/json"\n}');
+  const [body, setBody] = useState('{\n  "title": "foo",\n  "body": "bar",\n  "userId": 1\n}');
+  const [response, setResponse] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const sendRequest = async () => {
+    setLoading(true);
+    setError(null);
+    setResponse(null);
+
+    // Parse headers JSON
+    let hdrs = {};
+    if (headers.trim()) {
+      try {
+        hdrs = JSON.parse(headers);
+      } catch (e) {
+        setError('Cabeçalhos JSON inválidos.');
+        setLoading(false);
+        return;
+      }
+    }
+
+    // Preparar opções para fetch
+    const options = {
+      method,
+      headers: hdrs,
+    };
+
+    // Corpo (para métodos que usam corpo)
+    const isBodyMethod = !['GET', 'HEAD'].includes(method.toUpperCase());
+    if (isBodyMethod) {
+      if (body?.trim()) {
+        // Tentar enviar como JSON. Se falhar, enviar como texto
+        try {
+          const parsed = JSON.parse(body);
+          options.body = JSON.stringify(parsed);
+          // Garantir content-type JSON se não fornecido
+          if (!hdrs['Content-Type'] && !hdrs['content-type']) {
+            options.headers = { ...hdrs, 'Content-Type': 'application/json' };
+          }
+        } catch {
+          // Enviar como texto simples
+          options.body = body;
+        }
+      }
+    }
+
+    const start = performance.now();
+    try {
+      const res = await fetch(url, options);
+      const end = performance.now();
+      const duration = Math.round(end - start);
+
+      // Ler corpo com base no Content-Type
+      const contentType = res.headers.get('content-type') || '';
+      let data;
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        data = await res.text();
+      }
+
+      setResponse({
+        status: res.status,
+        statusText: res.statusText,
+        duration,
+        headers: Object.fromEntries(res.headers.entries()),
+        ok: res.ok,
+        body: data,
+        contentType,
+      });
+    } catch (err) {
+      setError(err?.message ?? 'Erro desconhecido ao fazer a requisição.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const prettyBody = (rb) => {
+    if (typeof rb?.body === 'object') {
+      return JSON.stringify(rb.body, null, 2);
+    }
+    return rb?.body ?? '';
+  };
+
+  const buildCurl = () => {
+    const hdrs = [];
+    try {
+      const parsed = headers ? JSON.parse(headers) : {};
+      Object.entries(parsed).forEach(([k, v]) => {
+        if (k && v !== undefined) hdrs.push(`-H '${k}: ${v}'`);
+      });
+    } catch {
+      // ignore parsing error; curl will still work semantically
+    }
+    const curl = [
+      `curl -X ${method} "${url}"`,
+      ...hdrs,
+      body && body.trim() ? `-d '${body}'` : ''
+    ].filter(Boolean).join(' ');
+    return curl;
+  };
+
+  const copyCurl = async () => {
+    try {
+      await navigator.clipboard.writeText(buildCurl());
+      alert('Curl copiado!');
+    } catch {
+      // falha de clipboard; ignorar
+    }
+  };
+
+  return (
+    <div style={{ padding: 16, fontFamily: 'Arial, sans-serif' }}>
+      <h2>Testador de API simples (React)</h2>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div>
+          <label>URL</label>
+          <input
+            type="text"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://api.example.com/endpoint"
+            style={{ width: '100%', padding: 8, marginTop: 4 }}
+          />
+        </div>
+
+        <div>
+          <label>Método</label>
+          <select
+            value={method}
+            onChange={(e) => setMethod(e.target.value)}
+            style={{ width: '100%', padding: 8, marginTop: 4 }}
+          >
+            {['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
+        <div>
+          <label>Cabeçalhos (JSON)</label>
+          <textarea
+            value={headers}
+            onChange={(e) => setHeaders(e.target.value)}
+            placeholder='{"Content-Type": "application/json"}'
+            rows={6}
+            style={{ width: '100%', padding: 8, marginTop: 4, fontFamily: 'monospace' }}
+          />
+        </div>
+
+        <div>
+          <label>Corpo (Body) - para métodos que enviam dados</label>
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder='{"title": "foo", "body": "bar", "userId": 1}'
+            rows={6}
+            style={{ width: '100%', padding: 8, marginTop: 4, fontFamily: 'monospace' }}
+          />
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12 }}>
+        <button onClick={sendRequest} disabled={loading} style={{ padding: '10px 16px' }}>
+          {loading ? 'Enviando...' : 'Enviar'}
+        </button>
+        <button onClick={copyCurl} style={{ marginLeft: 8, padding: '10px 16px' }}>
+          Copiar curl
+        </button>
+        <div style={{ marginTop: 8, fontSize: 12, color: '#555' }}>
+          Dica: em ambiente de desenvolvimento, CORS pode bloquear chamadas diretas do navegador. Se necessário, utilize um proxy/servidor de mock.
+        </div>
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <h3>Resposta</h3>
+        {error && (
+          <pre style={{ background: '#fee', padding: 12, border: '1px solid #f99' }}>Erro: {error}</pre>
+        )}
+        {response && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <div><strong>Status:</strong> {response.status} {response.statusText}</div>
+              <div><strong>Duração:</strong> {response.duration} ms</div>
+              <div><strong>Content-Type:</strong> {response.contentType}</div>
+            </div>
+            <div>
+              <div><strong>URL:</strong> {url}</div>
+              <div><strong>OK:</strong> {response.ok ? 'true' : 'false'}</div>
+            </div>
+          </div>
+        )}
+        {response && (
+          <div style={{ marginTop: 8 }}>
+            <strong>Corpo da resposta:</strong>
+            <pre style={{ background: '#f6f8fa', padding: 12, border: '1px solid #ddd', maxHeight: 360, overflow: 'auto' }}>
+              {typeof response.body === 'object' ? JSON.stringify(response.body, null, 2) : String(response.body)}
+            </pre>
+          </div>
+        )}
+        {!response && !error && (
+          <div style={{ color: '#666' }}>
+            Envie uma requisição para ver a resposta.
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <h3>Curl gerado (para replicar no terminal)</h3>
+        <pre style={{ background: '#eef2f7', padding: 12, border: '1px solid #d0d7e0' }}>
+{buildCurl()}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+export default ApiTester;
