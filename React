@@ -1,540 +1,279 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 
-export default function ApiTesterPro() {
-  const [activeTab, setActiveTab] = useState("rest");
-
-  const [theme, setTheme] = useState("dark");
-
-  const [environment, setEnvironment] = useState("DEV");
-
-  const environments = {
-    DEV: "https://dev.api.com",
-    PROD: "https://api.com",
-  };
-
+export default function ApiTester() {
   const [url, setUrl] = useState("");
   const [method, setMethod] = useState("GET");
 
-  const [jwt, setJwt] = useState("");
+  const [headers, setHeaders] = useState(
+    '{\n  "Content-Type": "application/json"\n}'
+  );
 
-  const [headers, setHeaders] = useState(`{
-  "Content-Type": "application/json"
-}`);
+  const [body, setBody] = useState(
+    '{\n  "nome": "Teste"\n}'
+  );
 
-  const [body, setBody] = useState(`{
-  "nome": "Teste"
-}`);
-
+  const [token, setToken] = useState("");
   const [response, setResponse] = useState("");
-
   const [status, setStatus] = useState("");
-
+  const [responseTime, setResponseTime] = useState("");
+  const [responseSize, setResponseSize] = useState("");
   const [loading, setLoading] = useState(false);
-
-  const [collections, setCollections] = useState([]);
-
-  const [collectionName, setCollectionName] = useState("");
-
-  const [graphqlQuery, setGraphqlQuery] = useState(`{
-  users {
-    id
-    name
-  }
-}`);
-
-  const [curlCommand, setCurlCommand] = useState("");
-
-  const [wsMessages, setWsMessages] = useState([]);
-
-  const [wsInput, setWsInput] = useState("");
-
-  const [socket, setSocket] = useState(null);
-
-  const [file, setFile] = useState(null);
-
-  const isDark = theme === "dark";
-
-  useEffect(() => {
-    const saved = localStorage.getItem("collections");
-
-    if (saved) {
-      setCollections(JSON.parse(saved));
-    }
-  }, []);
 
   const sendRequest = async () => {
     try {
       setLoading(true);
+      setResponse("");
+      setStatus("");
+      setResponseTime("");
+      setResponseSize("");
 
-      let parsedHeaders = JSON.parse(headers);
-
-      if (jwt) {
-        parsedHeaders.Authorization = `Bearer ${jwt}`;
+      if (!url.trim()) {
+        throw new Error("Informe uma URL");
       }
 
-      const finalUrl = url.startsWith("http")
-        ? url
-        : environments[environment] + url;
+      try {
+        new URL(url);
+      } catch {
+        throw new Error("URL inválida");
+      }
+
+      let parsedHeaders = {};
+
+      try {
+        parsedHeaders = JSON.parse(headers);
+      } catch {
+        throw new Error("Headers JSON inválido");
+      }
+
+      if (token.trim()) {
+        parsedHeaders.Authorization = `Bearer ${token}`;
+      }
 
       const options = {
         method,
         headers: parsedHeaders,
       };
 
-      if (method !== "GET") {
+      if (
+        method === "POST" ||
+        method === "PUT" ||
+        method === "PATCH"
+      ) {
+        try {
+          JSON.parse(body);
+        } catch {
+          throw new Error("Body JSON inválido");
+        }
+
         options.body = body;
       }
 
-      if (file) {
-        const formData = new FormData();
+      const start = performance.now();
 
-        formData.append("file", file);
+      const res = await fetch(url, options);
 
-        options.body = formData;
+      const end = performance.now();
 
-        delete options.headers["Content-Type"];
-      }
+      setResponseTime(
+        `${Math.round(end - start)} ms`
+      );
 
-      const res = await fetch(finalUrl, options);
+      setStatus(
+        `${res.status} ${res.statusText}`
+      );
 
-      const text = await res.text();
+      const contentType =
+        res.headers.get("content-type");
 
-      setStatus(`${res.status} ${res.statusText}`);
+      let responseText = "";
 
-      try {
-        setResponse(
-          JSON.stringify(JSON.parse(text), null, 2)
+      if (
+        contentType &&
+        contentType.includes("application/json")
+      ) {
+        const data = await res.json();
+
+        responseText = JSON.stringify(
+          data,
+          null,
+          2
         );
-      } catch {
-        setResponse(text);
+      } else {
+        responseText = await res.text();
       }
-    } catch (err) {
-      setResponse("Erro: " + err.message);
+
+      setResponse(responseText);
+
+      setResponseSize(
+        `${new Blob([responseText]).size} bytes`
+      );
+    } catch (error) {
+      setResponse(`Erro: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const saveCollection = () => {
-    const newCollection = {
-      name: collectionName,
-      url,
-      method,
-      headers,
-      body,
-    };
-
-    const updated = [...collections, newCollection];
-
-    setCollections(updated);
-
-    localStorage.setItem(
-      "collections",
-      JSON.stringify(updated)
-    );
-
-    alert("Collection salva!");
+  const copyResponse = () => {
+    navigator.clipboard.writeText(response);
+    alert("Resposta copiada!");
   };
 
-  const loadCollection = (item) => {
-    setUrl(item.url);
-    setMethod(item.method);
-    setHeaders(item.headers);
-    setBody(item.body);
+  const clearAll = () => {
+    setResponse("");
+    setStatus("");
+    setResponseTime("");
+    setResponseSize("");
   };
 
-  const exportCollections = () => {
-    const blob = new Blob(
-      [JSON.stringify(collections, null, 2)],
-      { type: "application/json" }
-    );
+  const getStatusColor = () => {
+    const code = parseInt(status);
 
-    const link = document.createElement("a");
+    if (code >= 200 && code < 300)
+      return "#22c55e";
 
-    link.href = URL.createObjectURL(blob);
+    if (code >= 400 && code < 500)
+      return "#f59e0b";
 
-    link.download = "collections.json";
+    if (code >= 500)
+      return "#ef4444";
 
-    link.click();
-  };
-
-  const importCurl = () => {
-    try {
-      const parts = curlCommand.split(" ");
-
-      const curlUrl = parts.find((p) =>
-        p.startsWith("http")
-      );
-
-      setUrl(curlUrl || "");
-
-      if (curlCommand.includes("-X POST")) {
-        setMethod("POST");
-      }
-
-      if (curlCommand.includes("-X PUT")) {
-        setMethod("PUT");
-      }
-
-      alert("CURL importado!");
-    } catch {
-      alert("Erro ao importar CURL");
-    }
-  };
-
-  const connectWebSocket = () => {
-    const ws = new WebSocket(url);
-
-    ws.onopen = () => {
-      setWsMessages((prev) => [
-        ...prev,
-        "✅ Conectado",
-      ]);
-    };
-
-    ws.onmessage = (event) => {
-      setWsMessages((prev) => [
-        ...prev,
-        "📩 " + event.data,
-      ]);
-    };
-
-    ws.onerror = () => {
-      setWsMessages((prev) => [
-        ...prev,
-        "❌ Erro WebSocket",
-      ]);
-    };
-
-    setSocket(ws);
-  };
-
-  const sendWsMessage = () => {
-    if (socket) {
-      socket.send(wsInput);
-
-      setWsMessages((prev) => [
-        ...prev,
-        "📤 " + wsInput,
-      ]);
-
-      setWsInput("");
-    }
-  };
-
-  const runGraphQL = async () => {
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          query: graphqlQuery,
-        }),
-      });
-
-      const data = await res.json();
-
-      setResponse(
-        JSON.stringify(data, null, 2)
-      );
-    } catch (err) {
-      setResponse(err.message);
-    }
+    return "#64748b";
   };
 
   return (
-    <div
-      style={{
-        ...styles.body(isDark),
-      }}
-    >
-      <div style={styles.container(isDark)}>
+    <div style={styles.body}>
+      <div style={styles.container}>
         <h1 style={styles.title}>
-          🚀 API TESTER ULTRA
+          🚀 API Tester React Pro
         </h1>
 
-        <div style={styles.tabs}>
-          {[
-            "rest",
-            "graphql",
-            "websocket",
-            "collections",
-            "curl",
-          ].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              style={styles.tab(
-                activeTab === tab,
-                isDark
-              )}
-            >
-              {tab.toUpperCase()}
-            </button>
-          ))}
-        </div>
+        <input
+          type="text"
+          placeholder="https://api.exemplo.com"
+          value={url}
+          onChange={(e) =>
+            setUrl(e.target.value)
+          }
+          style={styles.input}
+        />
 
-        <div style={styles.topBar}>
-          <select
-            value={theme}
+        <select
+          value={method}
+          onChange={(e) =>
+            setMethod(e.target.value)
+          }
+          style={styles.select}
+        >
+          <option>GET</option>
+          <option>POST</option>
+          <option>PUT</option>
+          <option>PATCH</option>
+          <option>DELETE</option>
+        </select>
+
+        <input
+          type="text"
+          placeholder="JWT Token (Opcional)"
+          value={token}
+          onChange={(e) =>
+            setToken(e.target.value)
+          }
+          style={styles.input}
+        />
+
+        <div style={styles.section}>
+          <h3>Headers</h3>
+
+          <textarea
+            value={headers}
             onChange={(e) =>
-              setTheme(e.target.value)
+              setHeaders(e.target.value)
             }
-            style={styles.input(isDark)}
-          >
-            <option value="dark">
-              Dark
-            </option>
-
-            <option value="light">
-              Light
-            </option>
-          </select>
-
-          <select
-            value={environment}
-            onChange={(e) =>
-              setEnvironment(e.target.value)
-            }
-            style={styles.input(isDark)}
-          >
-            <option value="DEV">
-              DEV
-            </option>
-
-            <option value="PROD">
-              PROD
-            </option>
-          </select>
+            style={styles.textarea}
+          />
         </div>
 
-        {activeTab === "rest" && (
-          <>
-            <input
-              type="text"
-              placeholder="/users"
-              value={url}
-              onChange={(e) =>
-                setUrl(e.target.value)
-              }
-              style={styles.input(isDark)}
-            />
-
-            <select
-              value={method}
-              onChange={(e) =>
-                setMethod(e.target.value)
-              }
-              style={styles.input(isDark)}
-            >
-              <option>GET</option>
-              <option>POST</option>
-              <option>PUT</option>
-              <option>DELETE</option>
-              <option>PATCH</option>
-            </select>
-
-            <input
-              type="text"
-              placeholder="JWT Token"
-              value={jwt}
-              onChange={(e) =>
-                setJwt(e.target.value)
-              }
-              style={styles.input(isDark)}
-            />
+        {(method === "POST" ||
+          method === "PUT" ||
+          method === "PATCH") && (
+          <div style={styles.section}>
+            <h3>Body</h3>
 
             <textarea
-              value={headers}
+              value={body}
               onChange={(e) =>
-                setHeaders(e.target.value)
+                setBody(e.target.value)
               }
-              style={styles.editor(isDark)}
+              style={styles.textarea}
             />
-
-            {method !== "GET" && (
-              <textarea
-                value={body}
-                onChange={(e) =>
-                  setBody(e.target.value)
-                }
-                style={styles.editor(isDark)}
-              />
-            )}
-
-            <input
-              type="file"
-              onChange={(e) =>
-                setFile(e.target.files[0])
-              }
-              style={styles.input(isDark)}
-            />
-
-            <button
-              onClick={sendRequest}
-              style={styles.button}
-            >
-              {loading
-                ? "⏳ Enviando..."
-                : "🚀 Enviar"}
-            </button>
-          </>
+          </div>
         )}
 
-        {activeTab === "graphql" && (
-          <>
-            <input
-              type="text"
-              placeholder="GraphQL Endpoint"
-              value={url}
-              onChange={(e) =>
-                setUrl(e.target.value)
-              }
-              style={styles.input(isDark)}
-            />
+        <button
+          onClick={sendRequest}
+          disabled={loading}
+          style={{
+            ...styles.button,
+            opacity: loading ? 0.7 : 1,
+          }}
+        >
+          {loading
+            ? "Enviando..."
+            : "Enviar Requisição"}
+        </button>
 
-            <textarea
-              value={graphqlQuery}
-              onChange={(e) =>
-                setGraphqlQuery(
-                  e.target.value
-                )
-              }
-              style={styles.editor(isDark)}
-            />
+        <button
+          onClick={copyResponse}
+          style={{
+            ...styles.button,
+            background: "#10b981",
+          }}
+        >
+          📋 Copiar Resposta
+        </button>
 
-            <button
-              onClick={runGraphQL}
-              style={styles.button}
-            >
-              ▶ Executar Query
-            </button>
-          </>
+        <button
+          onClick={clearAll}
+          style={{
+            ...styles.button,
+            background: "#ef4444",
+          }}
+        >
+          🗑 Limpar
+        </button>
+
+        {status && (
+          <div
+            style={{
+              ...styles.status,
+              borderLeft: `6px solid ${getStatusColor()}`,
+            }}
+          >
+            <strong>Status:</strong>{" "}
+            {status}
+          </div>
         )}
 
-        {activeTab === "websocket" && (
-          <>
-            <input
-              type="text"
-              placeholder="wss://..."
-              value={url}
-              onChange={(e) =>
-                setUrl(e.target.value)
-              }
-              style={styles.input(isDark)}
-            />
-
-            <button
-              onClick={connectWebSocket}
-              style={styles.button}
-            >
-              🔌 Conectar
-            </button>
-
-            <input
-              type="text"
-              placeholder="Mensagem"
-              value={wsInput}
-              onChange={(e) =>
-                setWsInput(e.target.value)
-              }
-              style={styles.input(isDark)}
-            />
-
-            <button
-              onClick={sendWsMessage}
-              style={styles.button}
-            >
-              📤 Enviar
-            </button>
-
-            <div style={styles.response(isDark)}>
-              {wsMessages.map((m, i) => (
-                <div key={i}>{m}</div>
-              ))}
-            </div>
-          </>
+        {responseTime && (
+          <div style={styles.status}>
+            ⏱ Tempo: {responseTime}
+          </div>
         )}
 
-        {activeTab === "collections" && (
-          <>
-            <input
-              type="text"
-              placeholder="Nome da Collection"
-              value={collectionName}
-              onChange={(e) =>
-                setCollectionName(
-                  e.target.value
-                )
-              }
-              style={styles.input(isDark)}
-            />
-
-            <button
-              onClick={saveCollection}
-              style={styles.button}
-            >
-              💾 Salvar Collection
-            </button>
-
-            <button
-              onClick={exportCollections}
-              style={styles.button}
-            >
-              📦 Exportar JSON
-            </button>
-
-            <div style={styles.response(isDark)}>
-              {collections.map(
-                (item, index) => (
-                  <div
-                    key={index}
-                    style={
-                      styles.collectionItem(
-                        isDark
-                      )
-                    }
-                    onClick={() =>
-                      loadCollection(item)
-                    }
-                  >
-                    {item.name}
-                  </div>
-                )
-              )}
-            </div>
-          </>
+        {responseSize && (
+          <div style={styles.status}>
+            📦 Tamanho: {responseSize}
+          </div>
         )}
 
-        {activeTab === "curl" && (
-          <>
-            <textarea
-              value={curlCommand}
-              onChange={(e) =>
-                setCurlCommand(
-                  e.target.value
-                )
-              }
-              style={styles.editor(isDark)}
-            />
+        <div style={styles.responseBox}>
+          <h3>Resposta da API</h3>
 
-            <button
-              onClick={importCurl}
-              style={styles.button}
-            >
-              📥 Importar CURL
-            </button>
-          </>
-        )}
-
-        <div style={styles.status(isDark)}>
-          {status}
-        </div>
-
-        <div style={styles.response(isDark)}>
-          <pre>{response}</pre>
+          <pre style={styles.pre}>
+            {response ||
+              "A resposta aparecerá aqui..."}
+          </pre>
         </div>
       </div>
     </div>
@@ -542,120 +281,99 @@ export default function ApiTesterPro() {
 }
 
 const styles = {
-  body: (dark) => ({
+  body: {
     minHeight: "100vh",
-    background: dark
-      ? "#020617"
-      : "#f1f5f9",
-    color: dark ? "#fff" : "#000",
+    background: "#0f172a",
+    color: "#fff",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
     padding: 20,
     fontFamily: "Arial",
-  }),
+  },
 
-  container: (dark) => ({
-    maxWidth: 1200,
-    margin: "0 auto",
-    background: dark
-      ? "#0f172a"
-      : "#fff",
+  container: {
+    width: "100%",
+    maxWidth: 1000,
+    background: "#1e293b",
     padding: 25,
-    borderRadius: 20,
-  }),
+    borderRadius: 15,
+    boxShadow:
+      "0 0 25px rgba(0,0,0,0.5)",
+  },
 
   title: {
     textAlign: "center",
     marginBottom: 20,
   },
 
-  tabs: {
-    display: "flex",
-    gap: 10,
-    marginBottom: 20,
-    flexWrap: "wrap",
-  },
-
-  tab: (active, dark) => ({
-    padding: 10,
-    border: "none",
-    borderRadius: 10,
-    cursor: "pointer",
-    background: active
-      ? "#2563eb"
-      : dark
-      ? "#1e293b"
-      : "#cbd5e1",
-    color: "#fff",
-  }),
-
-  topBar: {
-    display: "flex",
-    gap: 10,
-    marginBottom: 20,
-  },
-
-  input: (dark) => ({
+  input: {
     width: "100%",
     padding: 12,
     marginBottom: 15,
-    borderRadius: 10,
+    borderRadius: 8,
     border: "none",
-    background: dark
-      ? "#1e293b"
-      : "#e2e8f0",
-    color: dark ? "#fff" : "#000",
-  }),
+    boxSizing: "border-box",
+    fontSize: 15,
+  },
 
-  editor: (dark) => ({
+  select: {
     width: "100%",
-    minHeight: 180,
-    padding: 15,
+    padding: 12,
     marginBottom: 15,
-    borderRadius: 10,
+    borderRadius: 8,
     border: "none",
+    boxSizing: "border-box",
+    fontSize: 15,
+  },
+
+  section: {
+    marginBottom: 20,
+  },
+
+  textarea: {
+    width: "100%",
+    minHeight: 150,
+    padding: 12,
+    borderRadius: 8,
+    border: "none",
+    boxSizing: "border-box",
+    resize: "vertical",
     fontFamily: "monospace",
-    background: dark
-      ? "#1e293b"
-      : "#e2e8f0",
-    color: dark ? "#fff" : "#000",
-  }),
+    fontSize: 14,
+  },
 
   button: {
     width: "100%",
     padding: 14,
+    marginBottom: 10,
     border: "none",
     borderRadius: 10,
-    background: "#2563eb",
+    background: "#3b82f6",
     color: "#fff",
     fontSize: 16,
-    marginBottom: 15,
     cursor: "pointer",
   },
 
-  response: (dark) => ({
-    background: dark
-      ? "#020617"
-      : "#e2e8f0",
+  status: {
+    marginBottom: 10,
+    padding: 12,
+    background: "#334155",
+    borderRadius: 8,
+  },
+
+  responseBox: {
+    marginTop: 20,
+    background: "#0f172a",
     padding: 15,
     borderRadius: 10,
-    overflowX: "auto",
-  }),
+    maxHeight: 500,
+    overflow: "auto",
+  },
 
-  status: (dark) => ({
-    marginBottom: 15,
-    padding: 10,
-    borderRadius: 10,
-    background: dark
-      ? "#1e293b"
-      : "#cbd5e1",
-  }),
-
-  collectionItem: (dark) => ({
-    padding: 12,
-    marginBottom: 10,
-    borderRadius: 10,
-    background: dark
-      ? "#1e293b"
-      : "#cbd5e1",
-    cursor: "pointer",
-  }),
+  pre: {
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    margin: 0,
+  },
 };
