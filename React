@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 
 export default function ApiTester() {
   const [url, setUrl] = useState("");
@@ -13,23 +13,43 @@ export default function ApiTester() {
   );
 
   const [token, setToken] = useState("");
+
   const [response, setResponse] = useState("");
   const [status, setStatus] = useState("");
   const [responseTime, setResponseTime] = useState("");
   const [responseSize, setResponseSize] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const [responseHeaders, setResponseHeaders] = useState({});
+  const [history, setHistory] = useState([]);
+
+  // load history safely (avoid SSR crash)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("api-history");
+      if (saved) setHistory(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("api-history", JSON.stringify(history));
+    } catch {}
+  }, [history]);
+
   const sendRequest = async () => {
+    let timeoutId;
+    const controller = new AbortController();
+
     try {
       setLoading(true);
       setResponse("");
       setStatus("");
       setResponseTime("");
       setResponseSize("");
+      setResponseHeaders({});
 
-      if (!url.trim()) {
-        throw new Error("Informe uma URL");
-      }
+      if (!url.trim()) throw new Error("Informe uma URL");
 
       try {
         new URL(url);
@@ -38,7 +58,6 @@ export default function ApiTester() {
       }
 
       let parsedHeaders = {};
-
       try {
         parsedHeaders = JSON.parse(headers);
       } catch {
@@ -49,74 +68,107 @@ export default function ApiTester() {
         parsedHeaders.Authorization = `Bearer ${token}`;
       }
 
+      const methodsWithBody = ["POST", "PUT", "PATCH", "DELETE"];
+
       const options = {
         method,
         headers: parsedHeaders,
+        signal: controller.signal,
       };
 
-      if (
-        method === "POST" ||
-        method === "PUT" ||
-        method === "PATCH"
-      ) {
-        try {
-          JSON.parse(body);
-        } catch {
-          throw new Error("Body JSON inválido");
+      if (methodsWithBody.includes(method)) {
+        const contentType = parsedHeaders["Content-Type"] || "";
+
+        if (contentType.includes("application/json")) {
+          try {
+            JSON.parse(body);
+          } catch {
+            throw new Error("Body JSON inválido");
+          }
         }
 
-        options.body = body;
+        if (body.trim()) {
+          options.body = body;
+        }
       }
+
+      timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 10000);
 
       const start = performance.now();
 
       const res = await fetch(url, options);
 
       const end = performance.now();
+      clearTimeout(timeoutId);
 
-      setResponseTime(
-        `${Math.round(end - start)} ms`
-      );
+      setResponseTime(`${Math.round(end - start)} ms`);
+      setStatus(`${res.status} ${res.statusText}`);
 
-      setStatus(
-        `${res.status} ${res.statusText}`
-      );
+      // headers
+      const headersObj = {};
+      res.headers.forEach((v, k) => (headersObj[k] = v));
+      setResponseHeaders(headersObj);
 
-      const contentType =
-        res.headers.get("content-type");
-
+      // response body safe parse
       let responseText = "";
+      const contentType = res.headers.get("content-type") || "";
 
-      if (
-        contentType &&
-        contentType.includes("application/json")
-      ) {
-        const data = await res.json();
-
-        responseText = JSON.stringify(
-          data,
-          null,
-          2
-        );
-      } else {
-        responseText = await res.text();
+      try {
+        if (contentType.includes("application/json")) {
+          const data = await res.json();
+          responseText = JSON.stringify(data, null, 2);
+        } else {
+          responseText = await res.text();
+        }
+      } catch {
+        responseText = "Erro ao interpretar resposta da API";
       }
 
       setResponse(responseText);
 
-      setResponseSize(
-        `${new Blob([responseText]).size} bytes`
-      );
+      const bytes = new TextEncoder().encode(responseText).length;
+      setResponseSize(`${bytes} bytes`);
+
+      setHistory((prev) => [
+        {
+          id: Date.now(),
+          method,
+          url,
+          status: res.status,
+          date: new Date().toLocaleString(),
+        },
+        ...prev.slice(0, 19),
+      ]);
     } catch (error) {
-      setResponse(`Erro: ${error.message}`);
+      clearTimeout(timeoutId);
+
+      let message = error.message;
+
+      if (error.name === "AbortError") {
+        message = "Timeout: a API demorou mais de 10 segundos.";
+      }
+
+      if (error instanceof TypeError) {
+        message = "Falha de rede ou CORS bloqueado pelo navegador.";
+      }
+
+      setStatus("Erro");
+      setResponse(message);
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   };
 
-  const copyResponse = () => {
-    navigator.clipboard.writeText(response);
-    alert("Resposta copiada!");
+  const copyResponse = async () => {
+    try {
+      await navigator.clipboard.writeText(response || "");
+      alert("Resposta copiada!");
+    } catch {
+      alert("Não foi possível copiar.");
+    }
   };
 
   const clearAll = () => {
@@ -124,19 +176,23 @@ export default function ApiTester() {
     setStatus("");
     setResponseTime("");
     setResponseSize("");
+    setResponseHeaders({});
+  };
+
+  const clearHistory = () => {
+    setHistory([]);
+    localStorage.removeItem("api-history");
   };
 
   const getStatusColor = () => {
-    const code = parseInt(status);
+    if (status === "Erro") return "#ef4444";
 
-    if (code >= 200 && code < 300)
-      return "#22c55e";
+    const code = Number(status.split(" ")[0]);
 
-    if (code >= 400 && code < 500)
-      return "#f59e0b";
-
-    if (code >= 500)
-      return "#ef4444";
+    if (Number.isNaN(code)) return "#64748b";
+    if (code >= 200 && code < 300) return "#22c55e";
+    if (code >= 400 && code < 500) return "#f59e0b";
+    if (code >= 500) return "#ef4444";
 
     return "#64748b";
   };
@@ -144,26 +200,19 @@ export default function ApiTester() {
   return (
     <div style={styles.body}>
       <div style={styles.container}>
-        <h1 style={styles.title}>
-          🚀 API Tester React Pro
-        </h1>
+        <h1 style={styles.title}>🚀 API Tester React Pro</h1>
 
         <input
-          type="text"
+          style={styles.input}
           placeholder="https://api.exemplo.com"
           value={url}
-          onChange={(e) =>
-            setUrl(e.target.value)
-          }
-          style={styles.input}
+          onChange={(e) => setUrl(e.target.value)}
         />
 
         <select
-          value={method}
-          onChange={(e) =>
-            setMethod(e.target.value)
-          }
           style={styles.select}
+          value={method}
+          onChange={(e) => setMethod(e.target.value)}
         >
           <option>GET</option>
           <option>POST</option>
@@ -173,106 +222,81 @@ export default function ApiTester() {
         </select>
 
         <input
-          type="text"
+          style={styles.input}
           placeholder="JWT Token (Opcional)"
           value={token}
-          onChange={(e) =>
-            setToken(e.target.value)
-          }
-          style={styles.input}
+          onChange={(e) => setToken(e.target.value)}
         />
 
-        <div style={styles.section}>
-          <h3>Headers</h3>
+        <h3>Headers</h3>
+        <textarea
+          style={styles.textarea}
+          value={headers}
+          onChange={(e) => setHeaders(e.target.value)}
+        />
 
-          <textarea
-            value={headers}
-            onChange={(e) =>
-              setHeaders(e.target.value)
-            }
-            style={styles.textarea}
-          />
-        </div>
-
-        {(method === "POST" ||
-          method === "PUT" ||
-          method === "PATCH") && (
-          <div style={styles.section}>
+        {method !== "GET" && (
+          <>
             <h3>Body</h3>
-
             <textarea
-              value={body}
-              onChange={(e) =>
-                setBody(e.target.value)
-              }
               style={styles.textarea}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
             />
-          </div>
+          </>
         )}
 
-        <button
-          onClick={sendRequest}
-          disabled={loading}
-          style={{
-            ...styles.button,
-            opacity: loading ? 0.7 : 1,
-          }}
-        >
-          {loading
-            ? "Enviando..."
-            : "Enviar Requisição"}
+        <button style={styles.button} disabled={loading} onClick={sendRequest}>
+          {loading ? "Enviando..." : "Enviar Requisição"}
         </button>
 
-        <button
-          onClick={copyResponse}
-          style={{
-            ...styles.button,
-            background: "#10b981",
-          }}
-        >
-          📋 Copiar Resposta
+        <button style={{ ...styles.button, background: "#10b981" }} onClick={copyResponse}>
+          📋 Copiar
         </button>
 
-        <button
-          onClick={clearAll}
-          style={{
-            ...styles.button,
-            background: "#ef4444",
-          }}
-        >
-          🗑 Limpar
+        <button style={{ ...styles.button, background: "#ef4444" }} onClick={clearAll}>
+          🧹 Limpar
+        </button>
+
+        <button style={{ ...styles.button, background: "#f97316" }} onClick={clearHistory}>
+          🗑 Histórico
         </button>
 
         {status && (
-          <div
-            style={{
-              ...styles.status,
-              borderLeft: `6px solid ${getStatusColor()}`,
-            }}
-          >
-            <strong>Status:</strong>{" "}
-            {status}
+          <div style={{ ...styles.status, borderLeft: `6px solid ${getStatusColor()}` }}>
+            <strong>Status:</strong> {status}
           </div>
         )}
 
-        {responseTime && (
-          <div style={styles.status}>
-            ⏱ Tempo: {responseTime}
+        {responseTime && <div style={styles.status}>⏱ {responseTime}</div>}
+        {responseSize && <div style={styles.status}>📦 {responseSize}</div>}
+
+        {Object.keys(responseHeaders).length > 0 && (
+          <div style={styles.responseBox}>
+            <h3>Headers</h3>
+            <pre style={styles.pre}>
+              {JSON.stringify(responseHeaders, null, 2)}
+            </pre>
           </div>
         )}
 
-        {responseSize && (
-          <div style={styles.status}>
-            📦 Tamanho: {responseSize}
+        {history.length > 0 && (
+          <div style={styles.responseBox}>
+            <h3>Histórico</h3>
+            {history.map((h) => (
+              <div key={h.id} style={styles.historyItem}>
+                <strong>{h.method}</strong> - {h.status}
+                <div>{h.url}</div>
+                <small>{h.date}</small>
+              </div>
+            ))}
           </div>
         )}
 
         <div style={styles.responseBox}>
-          <h3>Resposta da API</h3>
-
+          <h3>Resposta</h3>
           <pre style={styles.pre}>
-            {response ||
-              "A resposta aparecerá aqui..."}
+            {response || "A resposta aparecerá aqui..."}
           </pre>
         </div>
       </div>
@@ -286,94 +310,51 @@ const styles = {
     background: "#0f172a",
     color: "#fff",
     display: "flex",
-    justifyContent: "center",
+    justifyContent: "flex-start",
     alignItems: "center",
+    flexDirection: "column",
     padding: 20,
     fontFamily: "Arial",
   },
-
   container: {
     width: "100%",
     maxWidth: 1000,
     background: "#1e293b",
     padding: 25,
     borderRadius: 15,
-    boxShadow:
-      "0 0 25px rgba(0,0,0,0.5)",
   },
-
-  title: {
-    textAlign: "center",
-    marginBottom: 20,
-  },
-
-  input: {
-    width: "100%",
-    padding: 12,
-    marginBottom: 15,
-    borderRadius: 8,
-    border: "none",
-    boxSizing: "border-box",
-    fontSize: 15,
-  },
-
-  select: {
-    width: "100%",
-    padding: 12,
-    marginBottom: 15,
-    borderRadius: 8,
-    border: "none",
-    boxSizing: "border-box",
-    fontSize: 15,
-  },
-
-  section: {
-    marginBottom: 20,
-  },
-
-  textarea: {
-    width: "100%",
-    minHeight: 150,
-    padding: 12,
-    borderRadius: 8,
-    border: "none",
-    boxSizing: "border-box",
-    resize: "vertical",
-    fontFamily: "monospace",
-    fontSize: 14,
-  },
-
+  title: { textAlign: "center" },
+  input: { width: "100%", padding: 10, marginBottom: 10 },
+  select: { width: "100%", padding: 10, marginBottom: 10 },
+  textarea: { width: "100%", minHeight: 120, marginBottom: 10 },
   button: {
     width: "100%",
-    padding: 14,
-    marginBottom: 10,
-    border: "none",
-    borderRadius: 10,
+    padding: 12,
+    marginBottom: 8,
     background: "#3b82f6",
     color: "#fff",
-    fontSize: 16,
+    border: "none",
+    borderRadius: 8,
     cursor: "pointer",
   },
-
   status: {
-    marginBottom: 10,
-    padding: 12,
     background: "#334155",
+    padding: 10,
+    marginBottom: 8,
+    borderRadius: 6,
+  },
+  responseBox: {
+    background: "#0f172a",
+    padding: 10,
+    marginTop: 10,
     borderRadius: 8,
   },
-
-  responseBox: {
-    marginTop: 20,
-    background: "#0f172a",
-    padding: 15,
-    borderRadius: 10,
-    maxHeight: 500,
-    overflow: "auto",
-  },
-
   pre: {
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
-    margin: 0,
+  },
+  historyItem: {
+    padding: 8,
+    borderBottom: "1px solid #334155",
   },
 };
